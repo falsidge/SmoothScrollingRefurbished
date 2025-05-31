@@ -2,26 +2,28 @@ package me.wolfii.mixin;
 
 import me.wolfii.Config;
 import me.wolfii.ScrollMath;
-import me.wolfii.ScrollableWidgetManipulator;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ScrollableWidget;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractScrollWidget;
+import net.minecraft.resources.ResourceLocation;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.function.Function;
-
-@Mixin(ScrollableWidget.class)
-public abstract class ScrollableWidgetMixin implements ScrollableWidgetManipulator {
+@Mixin(AbstractScrollWidget.class)
+public abstract class ScrollableWidgetMixin {
     @Shadow
-    private double scrollY;
+    private double scrollAmount;
 
     @Shadow
-    public abstract int getMaxScrollY();
+    public abstract int getMaxScrollAmount();
+
+    @Invoker("setScrollAmount")
+    public abstract void invokeSetScrollAmount(double scrollAmount);
 
     @Unique
     private double animationTimer = 0;
@@ -30,8 +32,8 @@ public abstract class ScrollableWidgetMixin implements ScrollableWidgetManipulat
     @Unique
     private boolean renderSmooth = false;
 
-    @Unique
-    public void smoothScrollingRefurbished$manipulateScrollAmount(float delta) {
+    @Inject(method = "renderWidget", at = @At("HEAD"))
+    private void manipulateScrollAmount(GuiGraphics context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
         renderSmooth = true;
         checkOutOfBounds(delta);
 
@@ -41,29 +43,29 @@ public abstract class ScrollableWidgetMixin implements ScrollableWidgetManipulat
 
     @Unique
     private void applyMotion(float delta) {
-        scrollY += ScrollMath.scrollbarVelocity(animationTimer, scrollStartVelocity) * delta;
+        scrollAmount += ScrollMath.scrollbarVelocity(animationTimer, scrollStartVelocity) * delta;
         animationTimer += delta * 10 / Config.animationDuration;
     }
 
     @Unique
     private void checkOutOfBounds(float delta) {
-        if (scrollY < 0) {
-            scrollY += ScrollMath.pushBackStrength(Math.abs(scrollY), delta);
-            if (scrollY > -0.2) scrollY = 0;
+        if (scrollAmount < 0) {
+            scrollAmount += ScrollMath.pushBackStrength(Math.abs(scrollAmount), delta);
+            if (scrollAmount > -0.2) scrollAmount = 0;
         }
-        if (scrollY > getMaxScrollY()) {
-            scrollY -= ScrollMath.pushBackStrength(scrollY - getMaxScrollY(), delta);
-            if (scrollY < getMaxScrollY() + 0.2) scrollY = getMaxScrollY();
+        if (scrollAmount > getMaxScrollAmount()) {
+            scrollAmount -= ScrollMath.pushBackStrength(scrollAmount - getMaxScrollAmount(), delta);
+            if (scrollAmount < getMaxScrollAmount() + 0.2) scrollAmount = getMaxScrollAmount();
         }
     }
 
-    @Redirect(method = "mouseScrolled", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/widget/ScrollableWidget;setScrollY(D)V"))
-    private void setVelocity(ScrollableWidget instance, double scrollY) {
+    @Redirect(method = "mouseScrolled", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/AbstractScrollWidget;setScrollAmount(D)V"))
+    private void setVelocity(AbstractScrollWidget instance, double scrollY) {
         if (!renderSmooth) {
-            instance.setScrollY(scrollY);
+            ((ScrollableWidgetMixin) (Object) instance).invokeSetScrollAmount(scrollY);
             return;
         }
-        double diff = scrollY - this.scrollY;
+        double diff = scrollY - this.scrollAmount;
         diff = Math.signum(diff) * Math.min(Math.abs(diff), 10);
         diff *= Config.scrollSpeed;
         if (Math.signum(diff) != Math.signum(scrollStartVelocity)) diff *= 2.5d;
@@ -72,24 +74,24 @@ public abstract class ScrollableWidgetMixin implements ScrollableWidgetManipulat
         animationTimer = 0;
     }
 
-    @Redirect(method = "drawScrollbar", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/DrawContext;drawGuiTexture(Ljava/util/function/Function;Lnet/minecraft/util/Identifier;IIII)V", ordinal = 1))
-    private void modifyScrollbar(DrawContext instance, Function<Identifier, RenderLayer> renderLayers, Identifier sprite, int x, int y, int width, int height) {
+    @Redirect(method = "renderScrollBar", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/GuiGraphics;blitSprite(Lnet/minecraft/resources/ResourceLocation;IIII)V", ordinal = 0))
+    private void modifyScrollbar(GuiGraphics instance, ResourceLocation sprite, int x, int y, int width, int height) {
         if (!renderSmooth) {
-            instance.drawGuiTexture(renderLayers, sprite, x, y, width, height);
+            instance.blitSprite(sprite, x, y, width, height);
             return;
         }
-        if (scrollY < 0) {
-            height -= ScrollMath.dampenSquish(Math.abs(scrollY), height);
+        if (scrollAmount < 0) {
+            height -= ScrollMath.dampenSquish(Math.abs(scrollAmount), height);
         }
-        int bottom = ((ScrollableWidget) (Object) this).getBottom();
+        int bottom = ((AbstractScrollWidget) (Object) this).getBottom();
         if (y + height > bottom) {
             y = bottom - height;
         }
-        if (scrollY > getMaxScrollY()) {
-            int squish = ScrollMath.dampenSquish(scrollY - getMaxScrollY(), height);
+        if (scrollAmount > getMaxScrollAmount()) {
+            int squish = ScrollMath.dampenSquish(scrollAmount - getMaxScrollAmount(), height);
             y += squish;
             height -= squish;
         }
-        instance.drawGuiTexture(renderLayers, sprite, x, y, width, height);
+        instance.blitSprite(sprite, x, y, width, height);
     }
 }
